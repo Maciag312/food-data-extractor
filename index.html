@@ -1,16 +1,151 @@
 <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/progressbar.js/1.1.0/progressbar.min.js'></script>
+<script src="https://cdn.jsdelivr.net/npm/pretty-print-json@1.3.1/dist/pretty-print-json.min.js"></script>
+
 <body>
-    <input type="file" id="input" multiple />
+    <div id="container"></div>
+
+    <input style="margin-left: 30px; margin-top: 30px" type="file" id="input" multiple />
+    <pre id=json class=json-container></pre>
+    <div id="output-text"></div>
+
 </body>
+<script>
+    class Order {
+        constructor(qty, mealName, total) {
+            this.qty = qty
+            this.mealName = mealName
+            this.total = total
+        }
+    }
+    
+    class Meal {
+        constructor(name, price) {
+            this.name = name;
+            this.price = price;
+        }
+    }
+
+
+    function getLineByTag(text, tag) {
+        var result = text.split('\n').filter(t => t.includes(tag))[0]
+        result = result.replace(tag, '')
+        return result
+    }
+    function extractRestaurant(text) {
+        return getLineByTag(text, '< ')
+    }
+
+    function extractDiscount(text) {
+        return extractPrice(getLineByTag(text, 'Menu discount '))
+    }
+
+    function extractDeliveryFee(text) {
+        return extractPrice(getLineByTag(text, 'Delivery fee '))
+    }
+
+    function extractTotal(text) {
+        return extractPrice(getLineByTag(text, 'Total '))
+    }
+
+    function extractPrice(priceWithCurrency) {
+        return parseFloat(priceWithCurrency.replace(' zt', '').replace(',', '.'))
+    }
+
+
+
+    function extracOrders(text) {
+        content = text.split('\n')
+        newOrder = false
+        orders = content.reduce((acc, val) => {
+            if (val.includes(' x ')) {
+                qty = val.split(' ')[0]
+                priceInZl = val.match('-?[0-9]+,[0-9]+ zt')[0]
+                mealName = val.split(' x ')[1].replace(priceInZl, '')
+                acc.push(new Order(qty, mealName, extractPrice(priceInZl)))
+                newOrder = true
+            } 
+            else if (val == '') {
+                newOrder = false
+            }
+            else if(newOrder === true) { // todo remove true
+                acc[acc.length - 1].mealName += (" " + val)
+                acc[acc.length - 1].mealName = acc[acc.length - 1].mealName.replace(/ +(?= )/g,'')
+                acc[acc.length - 1].mealName = acc[acc.length - 1].mealName.toLowerCase();
+            }
+            return acc
+        }, [])
+        return orders
+    }
+
+    function getMeals(orders, total, discount, deliveryFee) {
+        totalWithoutDelivery = total - deliveryFee
+        totalAfterDiscount = total - discount - deliveryFee
+        discountMultiplier = totalWithoutDelivery / totalAfterDiscount 
+
+        meals = orders.map(
+            order => {
+                orderPrice = order.total / order.qty
+                orderPrice *= discountMultiplier 
+                orderPrice += deliveryFee / orders.length
+                orderPrice = parseFloat(orderPrice).toFixed(2)
+
+                return new Meal(order.mealName, orderPrice)
+            }
+        )
+        return meals
+    }
+
+</script>
 <script>
     const inputElement = document.getElementById("input");
     inputElement.addEventListener("change", handleFiles, false);
-    function handleFiles() {
-        Tesseract.recognize(
-            'https://tesseract.projectnaptha.com/img/eng_bw.png','eng', 
-            { logger: m => console.log(m) }).then(({ data: { text } }) => {console.log(text);})
-  //const fileList = this.files; /* now you can work with the file list */
-}
+    var bar = new ProgressBar.Line(container, {
+        strokeWidth: 4,
+        easing: 'easeInOut',
+        duration: 1400,
+        color: '#FFEA82',
+        trailColor: '#eee',
+        trailWidth: 1,
+        svgStyle: {width: '100%', height: '10px'},
+        from: {color: '#FFEA82'},
+        to: {color: '#ED6A5A'},
+        step: (state, bar) => {
+            bar.path.setAttribute('stroke', state.color);
+        }
+    });
+
 
     
+    function handleFiles() {
+        const fileList = this.files;
+
+        Tesseract.recognize(
+            fileList[0],'eng', 
+            { logger: m => {
+                if(m.status === 'recognizing text') {
+                    bar.animate(m.progress)
+                }
+                console.log(m) 
+            }
+
+            }).then(({ data: { text } }) => {
+                restuarant = extractRestaurant(text)
+                discount = extractDiscount(text)
+                deliveryFee = extractDeliveryFee(text)
+                total = extractTotal(text)
+                orders = extracOrders(text)
+
+                meals = getMeals(orders, total, discount, deliveryFee)
+                const elem = document.getElementById('json');
+                elem.innerHTML = prettyPrintJson.toHtml(meals);
+                const hi = `Hej za dzisiejsze ${restuarant} wyszło:\n`
+
+                document.getElementById('output-text').innerText = 
+                hi + meals.map(meal => `- ${meal.name} : ${meal.price}PLN`).join('\n') + "\nProszę revolut: 694 080 295"
+
+
+            })
+    }
+
 </script>
